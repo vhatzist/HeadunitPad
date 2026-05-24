@@ -1391,7 +1391,7 @@ class AapTransport {
         payload += ProtoWire.fieldString(7, value: "Google")
         payload += ProtoWire.fieldString(8, value: "Desktop Head Unit")
         payload += ProtoWire.fieldString(9, value: "1")
-        payload += ProtoWire.fieldString(10, value: "0.1.0")
+        payload += ProtoWire.fieldString(10, value: "0.3.0")
         payload += ProtoWire.fieldVarint(11, value: 0)
         payload += ProtoWire.fieldVarint(12, value: 0) // hide_projected_clock = false
         payload += ProtoWire.fieldString(14, value: "Headunit Revived")
@@ -1403,7 +1403,7 @@ class AapTransport {
         headUnitInfo += ProtoWire.fieldString(5, value: "2025")
         headUnitInfo += ProtoWire.fieldString(6, value: "1")
         headUnitInfo += ProtoWire.fieldString(7, value: "headlessunit-001")
-        headUnitInfo += ProtoWire.fieldString(8, value: "0.1.0")
+        headUnitInfo += ProtoWire.fieldString(8, value: "0.3.0")
         payload += ProtoWire.fieldBytes(17, value: headUnitInfo)
 
         return payload
