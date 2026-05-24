@@ -12,10 +12,32 @@ import CoreLocation
 protocol AapTransportDelegate: AnyObject {
     func aapTransport(_ transport: AapTransport, didReceiveVideoData data: Data)
     func aapTransport(_ transport: AapTransport, didReceiveAudioData data: Data, on channel: UInt8)
+    func aapTransport(_ transport: AapTransport, didReceiveMediaMetadata metadata: AapMediaMetadata)
+    func aapTransport(_ transport: AapTransport, didReceivePlaybackStatus status: AapPlaybackStatus)
     func aapTransport(_ transport: AapTransport, didRequestMicrophoneCapture isOpen: Bool)
     func aapTransport(_ transport: AapTransport, didRequestLocationUpdates isEnabled: Bool)
     func aapTransport(_ transport: AapTransport, didChangeState state: AapTransportState)
     func aapTransportDidDisconnect(_ transport: AapTransport)
+}
+
+struct AapMediaMetadata {
+    let title: String?
+    let artist: String?
+    let album: String?
+    let durationSeconds: UInt64?
+    let albumArt: Data?
+}
+
+struct AapPlaybackStatus {
+    enum State: UInt64 {
+        case stopped = 1
+        case playing = 2
+        case paused = 3
+    }
+
+    let state: State?
+    let mediaSource: String?
+    let playbackSeconds: UInt64?
 }
 
 enum AapTransportState: Equatable {
@@ -57,9 +79,12 @@ class AapTransport {
     private var videoAssemblyBuffer = Data()
     private var videoFirstFragmentAtMs: UInt64 = 0
     private var lastVideoRecoveryRequestAtMs: UInt64 = 0
+    private var mediaPlaybackMetadataBuffer = Data()
+    private var isAssemblingMediaPlaybackMetadata = false
     private let videoAssemblyTimeoutMs: UInt64 = 1200
     private let minVideoRecoveryIntervalMs: UInt64 = 1500
     private let maxVideoAssemblyBytes = 6 * 1024 * 1024
+    private let maxMediaPlaybackMetadataBytes = 1024 * 1024
     private var consecutiveTlsDecryptFailures = 0
     private var consecutiveTlsEncryptFailures = 0
     private let maxConsecutiveTlsFailures = 6
@@ -404,6 +429,33 @@ class AapTransport {
 
         print("AapTransport: Send touch action=\(action) pointers=\(pointers.count) actionIndex=\(actionIndex)")
 
+        send(message: message)
+    }
+
+    func sendMediaKeyEvent(keyCode: Int) {
+        guard state == .running else { return }
+        sendKeyEvent(keyCode: keyCode, isDown: true)
+        sendKeyEvent(keyCode: keyCode, isDown: false)
+    }
+
+    private func sendKeyEvent(keyCode: Int, isDown: Bool) {
+        let key = ProtoWire.fieldVarint(1, value: UInt64(max(keyCode, 0)))
+            + ProtoWire.fieldVarint(2, value: isDown ? 1 : 0)
+            + ProtoWire.fieldVarint(3, value: 0)
+            + ProtoWire.fieldVarint(4, value: 0)
+
+        let keyEvent = ProtoWire.fieldBytes(1, value: key)
+        let payload = ProtoWire.fieldVarint(1, value: DispatchTime.now().uptimeNanoseconds)
+            + ProtoWire.fieldBytes(4, value: keyEvent)
+
+        let message = AapMessage(
+            channel: Channel.ID_INP,
+            flags: 0x00,
+            type: 0x8001,
+            payload: payload
+        )
+
+        print("AapTransport: Send keyCode=\(keyCode) isDown=\(isDown)")
         send(message: message)
     }
 
@@ -774,22 +826,95 @@ class AapTransport {
     }
 
     private func handleMediaPlaybackMessage(_ message: AapMessage) {
-        // Media playback channel is optional for HeadunitPad runtime.
-        // Consume packets explicitly to avoid protocol-side "unhandled channel" behavior.
-        switch message.type {
-        case 0x8001: // MediaPlaybackStatus
-            break
-        case 0x8002: // MediaPlaybackInput
-            break
-        case 0x8003: // MediaPlaybackMetadata
-            break
-        default:
-            break
+        if isAssemblingMediaPlaybackMetadata && (message.flags == 0x08 || message.flags == 0x0a) {
+            handleMediaPlaybackMetadata(message)
+            return
         }
+
+        switch message.type {
+        case 0x8001:
+            handleMediaPlaybackStatus(message.payload)
+        case 0x8002:
+            print("AapTransport: MPB input/start response packet size=\(message.payload.count)")
+            break
+        case 0x8003:
+            handleMediaPlaybackMetadata(message)
+        default:
+            print("AapTransport: MPB unhandled type=\(message.type) flags=\(message.flags) size=\(message.payload.count)")
+        }
+    }
+
+    private func handleMediaPlaybackStatus(_ payload: Data) {
+        let stateValue = ProtoWire.extractFirstVarint(from: payload, fieldNumber: 1)
+        let source = ProtoWire.extractFirstString(from: payload, fieldNumber: 2)
+        let seconds = ProtoWire.extractFirstVarint(from: payload, fieldNumber: 3)
+        let status = AapPlaybackStatus(
+            state: stateValue.flatMap { AapPlaybackStatus.State(rawValue: $0) },
+            mediaSource: source,
+            playbackSeconds: seconds
+        )
+        print("AapTransport: MPB status state=\(stateValue.map(String.init) ?? "-") source='\(source ?? "")' seconds=\(seconds.map(String.init) ?? "-")")
+        delegate?.aapTransport(self, didReceivePlaybackStatus: status)
+    }
+
+    private func handleMediaPlaybackMetadata(_ message: AapMessage) {
+        let payload: Data?
+        switch message.flags {
+        case 0x09:
+            mediaPlaybackMetadataBuffer = message.payload
+            isAssemblingMediaPlaybackMetadata = true
+            print("AapTransport: MPB metadata fragment start size=\(mediaPlaybackMetadataBuffer.count)")
+            payload = nil
+        case 0x08:
+            guard isAssemblingMediaPlaybackMetadata else { return }
+            mediaPlaybackMetadataBuffer.append(mediaPlaybackContinuationPayload(from: message))
+            if mediaPlaybackMetadataBuffer.count > maxMediaPlaybackMetadataBytes {
+                print("AapTransport: MPB metadata buffer exceeded limit, dropping \(mediaPlaybackMetadataBuffer.count) bytes")
+                mediaPlaybackMetadataBuffer.removeAll()
+                isAssemblingMediaPlaybackMetadata = false
+            }
+            payload = nil
+        case 0x0a:
+            guard isAssemblingMediaPlaybackMetadata else { return }
+            mediaPlaybackMetadataBuffer.append(mediaPlaybackContinuationPayload(from: message))
+            payload = mediaPlaybackMetadataBuffer
+            mediaPlaybackMetadataBuffer.removeAll()
+            isAssemblingMediaPlaybackMetadata = false
+        default:
+            payload = message.payload
+        }
+
+        guard let payload else { return }
+        print("AapTransport: MPB metadata packet flags=\(message.flags) size=\(payload.count)")
+        let metadata = AapMediaMetadata(
+            title: ProtoWire.extractFirstString(from: payload, fieldNumber: 1),
+            artist: ProtoWire.extractFirstString(from: payload, fieldNumber: 2),
+            album: ProtoWire.extractFirstString(from: payload, fieldNumber: 3),
+            durationSeconds: ProtoWire.extractFirstVarint(from: payload, fieldNumber: 6),
+            albumArt: ProtoWire.extractFirstBytes(from: payload, fieldNumber: 4)
+        )
+        print("AapTransport: MPB metadata title='\(metadata.title ?? "")' artist='\(metadata.artist ?? "")' album='\(metadata.album ?? "")'")
+        delegate?.aapTransport(self, didReceiveMediaMetadata: metadata)
+    }
+
+    private func mediaPlaybackContinuationPayload(from message: AapMessage) -> Data {
+        guard message.flags == 0x08 || message.flags == 0x0a else {
+            return message.payload
+        }
+
+        var data = Data()
+        data.append(UInt8((message.type >> 8) & 0xFF))
+        data.append(UInt8(message.type & 0xFF))
+        data.append(message.payload)
+        return data
     }
 
     private func handleNavigationMessage(_ message: AapMessage) {
         switch message.type {
+        case 0x8003: // NavigationStatus.MsgType.STATUS
+            let status = ProtoWire.extractFirstVarint(from: message.payload, fieldNumber: 1)
+            print("AapTransport: NAV status=\(status.map(String.init) ?? "-")")
+
         case 0x8004: // NavigationStatus.MsgType.NEXTTURNDETAILS
             let road = ProtoWire.extractFirstString(from: message.payload, fieldNumber: 1) ?? ""
             let side = ProtoWire.extractFirstVarint(from: message.payload, fieldNumber: 2) ?? 0
@@ -981,6 +1106,8 @@ class AapTransport {
 
         if channel == Channel.ID_SEN {
             sendDrivingStatusUnrestricted(on: channel)
+        } else if channel == Channel.ID_VID {
+            sendVideoFocusNotification(on: channel, reason: "channel-open")
         }
     }
 
@@ -1242,6 +1369,9 @@ class AapTransport {
                 + ProtoWire.fieldVarint(2, value: 2)  // ImageCodesOnly
             )
 
+        let mediaPlaybackService = ProtoWire.fieldVarint(1, value: UInt64(Channel.ID_MPB))
+            + ProtoWire.fieldBytes(9, value: Data())
+
         var payload = Data()
         payload += ProtoWire.fieldBytes(1, value: sensorService)
         payload += ProtoWire.fieldBytes(1, value: videoService)
@@ -1251,6 +1381,7 @@ class AapTransport {
         payload += ProtoWire.fieldBytes(1, value: audioServiceSpeech)
         payload += ProtoWire.fieldBytes(1, value: micService)
         payload += ProtoWire.fieldBytes(1, value: navService)
+        payload += ProtoWire.fieldBytes(1, value: mediaPlaybackService)
 
         payload += ProtoWire.fieldString(2, value: "Google")
         payload += ProtoWire.fieldString(3, value: "Desktop Head Unit")
@@ -1330,6 +1461,13 @@ private enum ProtoWire {
     }
 
     static func extractFirstString(from payload: Data, fieldNumber: Int) -> String? {
+        guard let data = extractFirstBytes(from: payload, fieldNumber: fieldNumber) else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
+    static func extractFirstBytes(from payload: Data, fieldNumber: Int) -> Data? {
         let bytes = [UInt8](payload)
         var idx = 0
         while idx < bytes.count {
@@ -1345,8 +1483,7 @@ private enum ProtoWire {
                 guard endIdx <= bytes.count else { return nil }
 
                 if field == fieldNumber {
-                    let data = Data(bytes[idx..<endIdx])
-                    return String(data: data, encoding: .utf8)
+                    return Data(bytes[idx..<endIdx])
                 }
                 idx = endIdx
                 continue
@@ -1399,9 +1536,11 @@ private enum ProtoWire {
         switch message.type {
         case 0x8000: // Media.MsgType.MEDIA_MESSAGE_SETUP
             sendMediaConfig(on: message.channel)
+            sendVideoFocusNotification(on: message.channel, reason: "video-setup")
 
         case 0x8001: // Media.MsgType.MEDIA_MESSAGE_START
             setMediaSessionId(fromStartPayload: message.payload, on: message.channel)
+            sendVideoFocusNotification(on: message.channel, reason: "video-start")
 
         case 0x8002: // Media.MsgType.MEDIA_MESSAGE_STOP
             break
@@ -1679,6 +1818,7 @@ private enum ProtoWire {
 
         lastVideoRecoveryRequestAtMs = nowMs
         print("AapTransport: Requesting video recovery, reason=\(reason)")
+        sendMediaConfig(on: Channel.ID_VID)
         sendVideoFocusNotification(on: Channel.ID_VID, reason: "recovery-\(reason)")
     }
 

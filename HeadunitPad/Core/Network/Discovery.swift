@@ -15,7 +15,13 @@ struct DiscoveredDevice: Identifiable, Equatable {
     let name: String?
 
     var displayName: String {
-        return name ?? "\(ip):\(port)"
+        if let name = name {
+            return name
+        }
+        if port == Discovery.launcherPort {
+            return "Wireless Helper at \(ip)"
+        }
+        return "\(ip):\(port)"
     }
 
     static func == (lhs: DiscoveredDevice, rhs: DiscoveredDevice) -> Bool {
@@ -39,13 +45,17 @@ class Discovery {
     private var preparedConnections: [String: NWConnection] = [:]
     private let probeLock = NSLock()
 
-    private let targetPort: UInt16 = 5277
+    static let headunitPort: UInt16 = 5277
+    static let launcherPort: UInt16 = 5289
+
+    private var targetPorts: [UInt16] = [Discovery.launcherPort, Discovery.headunitPort]
     private let connectionTimeout: TimeInterval = 2.5
 
     init() {}
 
-    func startScan() {
+    func startScan(ports: [UInt16] = [Discovery.launcherPort, Discovery.headunitPort]) {
         guard !isScanning else { return }
+        targetPorts = ports
         isScanning = true
 
         browseWorkItem?.cancel()
@@ -109,9 +119,10 @@ class Discovery {
             }
 
             group.enter()
-            checkHost(ip: ip, port: targetPort) { [weak self] success, foundIP in
-                if success, let foundIP = foundIP {
-                    let device = DiscoveredDevice(ip: foundIP, port: self?.targetPort ?? 5277, name: nil)
+            checkHost(ip: ip) { [weak self] success, foundIP, foundPort in
+                if success, let foundIP = foundIP, let foundPort = foundPort {
+                    let name = foundPort == Discovery.launcherPort ? "Wireless Helper at \(foundIP)" : nil
+                    let device = DiscoveredDevice(ip: foundIP, port: foundPort, name: name)
                     DispatchQueue.main.async {
                         self?.delegate?.discoveryDidFindDevice(device)
                     }
@@ -129,9 +140,23 @@ class Discovery {
         }
     }
 
-    private func checkHost(ip: String, port: UInt16, completion: @escaping (Bool, String?) -> Void) {
+    private func checkHost(ip: String, completion: @escaping (Bool, String?, UInt16?) -> Void) {
         guard isScanning else {
-            completion(false, nil)
+            completion(false, nil, nil)
+            return
+        }
+
+        checkPorts(ip: ip, ports: targetPorts, completion: completion)
+    }
+
+    private func checkPorts(ip: String, ports: [UInt16], completion: @escaping (Bool, String?, UInt16?) -> Void) {
+        guard isScanning else {
+            completion(false, nil, nil)
+            return
+        }
+
+        guard let port = ports.first else {
+            completion(false, nil, nil)
             return
         }
 
@@ -149,7 +174,7 @@ class Discovery {
 
         let finishProbe: (Bool, String?) -> Void = { [weak self] success, foundIP in
             guard let self = self else {
-                completion(success, foundIP)
+                completion(success, foundIP, success ? port : nil)
                 return
             }
 
@@ -157,7 +182,11 @@ class Discovery {
             self.activeProbeConnections.removeValue(forKey: probeId)
             self.probeLock.unlock()
 
-            completion(success, foundIP)
+            if success {
+                completion(true, foundIP, port)
+            } else {
+                self.checkPorts(ip: ip, ports: Array(ports.dropFirst()), completion: completion)
+            }
         }
 
         var hasCompleted = false
@@ -189,7 +218,11 @@ class Discovery {
                 hasCompleted = true
                 lock.unlock()
                 timeoutWorkItem.cancel()
-                self.storePreparedConnection(connection, ip: ip, port: port)
+                if port == Discovery.headunitPort {
+                    self.storePreparedConnection(connection, ip: ip, port: port)
+                } else {
+                    connection.cancel()
+                }
                 finishProbe(true, ip)
 
             case .failed, .cancelled:

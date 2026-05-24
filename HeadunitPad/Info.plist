@@ -45,6 +45,7 @@
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_androidauto._tcp</string>
+		<string>_aawireless._tcp</string>
 	</array>
 </dict>
 </plist>

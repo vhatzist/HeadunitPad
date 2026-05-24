@@ -85,14 +85,16 @@ final class MicrophoneCapture {
     private func restorePlaybackAudioSession() {
         let session = AVAudioSession.sharedInstance()
         do {
-            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try session.setCategory(.playback, mode: .default, options: [])
             try session.setActive(true)
+            NowPlayingCoordinator.shared.activate()
         } catch {
             print("MicrophoneCapture: Failed to restore playback session: \(error)")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                 do {
-                    try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+                    try session.setCategory(.playback, mode: .default, options: [])
                     try session.setActive(true)
+                    NowPlayingCoordinator.shared.activate()
                     print("MicrophoneCapture: Restored playback session on retry")
                 } catch {
                     print("MicrophoneCapture: Retry restore playback session failed: \(error)")

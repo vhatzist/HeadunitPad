@@ -106,6 +106,23 @@ enum ProjectionOrientation: Int {
     }
 }
 
+enum ProjectionConnectionMode: Int {
+    case auto = 0
+    case wirelessHelper = 1
+    case directHeadunit = 2
+
+    var title: String {
+        switch self {
+        case .auto:
+            return "Auto"
+        case .wirelessHelper:
+            return "Wireless Helper"
+        case .directHeadunit:
+            return "Direct Headunit Server"
+        }
+    }
+}
+
 enum ProjectionSettings {
     private static let defaults = UserDefaults.standard
     private static let videoResolutionKey = "projection-video-resolution"
@@ -113,6 +130,8 @@ enum ProjectionSettings {
     private static let gpsSourceKey = "projection-gps-source"
     private static let orientationKey = "projection-orientation"
     private static let dpiKey = "projection-dpi"
+    private static let connectionModeKey = "projection-connection-mode"
+    private static let autoReconnectKey = "projection-auto-reconnect"
     private static var cachedCellularSupport: Bool?
     private static let portraitCompatibilityResolution: ProjectionVideoResolution = .r1920x1080
     static let defaultDpi = 160
@@ -230,6 +249,28 @@ enum ProjectionSettings {
         set {
             let source = (newValue == .ipad && !supportsCellularIpad()) ? ProjectionGpsSource.phone : newValue
             defaults.set(source.rawValue, forKey: gpsSourceKey)
+        }
+    }
+
+    static var connectionMode: ProjectionConnectionMode {
+        get {
+            let value = defaults.integer(forKey: connectionModeKey)
+            return ProjectionConnectionMode(rawValue: value) ?? .auto
+        }
+        set {
+            defaults.set(newValue.rawValue, forKey: connectionModeKey)
+        }
+    }
+
+    static var autoReconnect: Bool {
+        get {
+            if defaults.object(forKey: autoReconnectKey) == nil {
+                return true
+            }
+            return defaults.bool(forKey: autoReconnectKey)
+        }
+        set {
+            defaults.set(newValue, forKey: autoReconnectKey)
         }
     }
 

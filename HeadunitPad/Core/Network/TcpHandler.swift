@@ -56,6 +56,16 @@ class TcpHandler {
         startReceiving()
     }
 
+    func acceptConnection(_ acceptedConnection: NWConnection, host: String, port: UInt16) {
+        print("TcpHandler: accepting inbound connection for host=\(host), port=\(port)")
+
+        disconnect()
+        connection = acceptedConnection
+        setupStateHandler(host: host, port: port)
+        connection?.start(queue: queue)
+        startConnectionTimeout()
+    }
+
     func connect(host: String, port: UInt16) {
         print("TcpHandler: connect called with host=\(host), port=\(port)")
 

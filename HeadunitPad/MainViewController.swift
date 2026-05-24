@@ -306,10 +306,11 @@ class MainViewController: UIViewController {
             titleLabel.isHidden = false
             subtitleLabel.isHidden = false
             statusLabel.isHidden = false
-            statusLabel.text = "Ready to connect"
+            statusLabel.text = connectionManager.statusDetail
             statusLabel.textColor = .tertiaryLabel
             connectButton.isHidden = false
             connectButton.isEnabled = true
+            updateConnectButtonTitle()
             manualIPButton.isHidden = false
             disconnectButton.isHidden = true
             activityIndicator.stopAnimating()
@@ -321,11 +322,25 @@ class MainViewController: UIViewController {
             titleLabel.isHidden = false
             subtitleLabel.isHidden = false
             statusLabel.isHidden = false
-            statusLabel.text = "Scanning for devices..."
+            statusLabel.text = connectionManager.statusDetail
             statusLabel.textColor = .secondaryLabel
             connectButton.isHidden = true
             manualIPButton.isHidden = true
             disconnectButton.isHidden = true
+            activityIndicator.startAnimating()
+
+        case .waitingForWirelessHelper:
+            stopVideoWatchdog()
+            videoContainerView.isHidden = true
+            settingsButton.isHidden = false
+            titleLabel.isHidden = false
+            subtitleLabel.isHidden = false
+            statusLabel.isHidden = false
+            statusLabel.text = connectionManager.statusDetail
+            statusLabel.textColor = .secondaryLabel
+            connectButton.isHidden = true
+            manualIPButton.isHidden = true
+            disconnectButton.isHidden = false
             activityIndicator.startAnimating()
 
         case .connecting:
@@ -335,7 +350,7 @@ class MainViewController: UIViewController {
             titleLabel.isHidden = false
             subtitleLabel.isHidden = false
             statusLabel.isHidden = false
-            statusLabel.text = "Connecting..."
+            statusLabel.text = connectionManager.statusDetail
             statusLabel.textColor = .secondaryLabel
             connectButton.isHidden = true
             manualIPButton.isHidden = true
@@ -349,7 +364,7 @@ class MainViewController: UIViewController {
             titleLabel.isHidden = false
             subtitleLabel.isHidden = false
             statusLabel.isHidden = false
-            statusLabel.text = "Handshaking..."
+            statusLabel.text = connectionManager.statusDetail
             statusLabel.textColor = .systemBlue
             connectButton.isHidden = true
             manualIPButton.isHidden = true
@@ -378,14 +393,28 @@ class MainViewController: UIViewController {
             titleLabel.isHidden = false
             subtitleLabel.isHidden = false
             statusLabel.isHidden = false
-            statusLabel.text = message
+            statusLabel.text = connectionManager.statusDetail.isEmpty ? message : connectionManager.statusDetail
             statusLabel.textColor = .systemRed
             connectButton.isHidden = false
             connectButton.isEnabled = true
+            updateConnectButtonTitle()
             manualIPButton.isHidden = false
             disconnectButton.isHidden = true
             activityIndicator.stopAnimating()
         }
+    }
+
+    private func updateConnectButtonTitle() {
+        let title: String
+        switch ProjectionSettings.connectionMode {
+        case .auto:
+            title = "Auto Connect"
+        case .wirelessHelper:
+            title = "Start Wireless Helper"
+        case .directHeadunit:
+            title = "Scan Headunit Server"
+        }
+        connectButton.configuration?.title = title
     }
 
     private func startVideoWatchdog() {
@@ -442,7 +471,7 @@ class MainViewController: UIViewController {
 
     @objc private func manualIPButtonTapped() {
         let alert = UIAlertController(title: "Enter IP Address",
-                                      message: "Enter the IP address of your Android phone",
+                                      message: "Enter the IP address of your Android phone or headunit server",
                                       preferredStyle: .alert)
 
         alert.addTextField { textField in
@@ -453,7 +482,7 @@ class MainViewController: UIViewController {
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
         alert.addAction(UIAlertAction(title: "Connect", style: .default) { [weak self] _ in
             guard let ip = alert.textFields?.first?.text, !ip.isEmpty else { return }
-            self?.connectionManager.connect(to: ip)
+            self?.connectionManager.connect(to: ip, port: Discovery.headunitPort)
         })
 
         present(alert, animated: true)
@@ -475,12 +504,25 @@ class MainViewController: UIViewController {
         let gpsSource = ProjectionSettings.gpsSource.title
         let dpi = ProjectionSettings.dpi
         let effectiveDpi = ProjectionSettings.effectiveDpi
+        let connectionMode = ProjectionSettings.connectionMode.title
+        let autoReconnect = ProjectionSettings.autoReconnect ? "On" : "Off"
 
         let alert = UIAlertController(
-            title: "Projection Settings",
-            message: "Changes apply on next connection.\nOrientation: \(orientation)\nResolution: \(resolution)\nFPS: \(fps)\(fps != effectiveFps ? " (effective: \(effectiveFps))" : "")\nDPI: \(dpi)\(dpi != effectiveDpi ? " (effective: \(effectiveDpi))" : "")\nGPS: \(gpsSource)",
+            title: "Settings",
+            message: "Changes apply on next connection.\nMode: \(connectionMode)\nAuto reconnect: \(autoReconnect)\nOrientation: \(orientation)\nResolution: \(resolution)\nFPS: \(fps)\(fps != effectiveFps ? " (effective: \(effectiveFps))" : "")\nDPI: \(dpi)\(dpi != effectiveDpi ? " (effective: \(effectiveDpi))" : "")\nGPS: \(gpsSource)",
             preferredStyle: .actionSheet
         )
+
+        alert.addAction(UIAlertAction(title: "Connection Mode", style: .default) { [weak self] _ in
+            self?.presentConnectionModeMenu()
+        })
+
+        let autoReconnectTitle = ProjectionSettings.autoReconnect ? "Auto Reconnect: On" : "Auto Reconnect: Off"
+        alert.addAction(UIAlertAction(title: autoReconnectTitle, style: .default) { [weak self] _ in
+            ProjectionSettings.autoReconnect.toggle()
+            self?.updateConnectButtonTitle()
+            self?.presentSettingsMenu()
+        })
 
         alert.addAction(UIAlertAction(title: "Orientation", style: .default) { [weak self] _ in
             self?.presentOrientationMenu()
@@ -504,6 +546,10 @@ class MainViewController: UIViewController {
         gpsAction.isEnabled = ProjectionSettings.supportsCellularIpad()
         alert.addAction(gpsAction)
 
+        alert.addAction(UIAlertAction(title: "Diagnostics", style: .default) { [weak self] _ in
+            self?.presentDiagnostics()
+        })
+
         if !ProjectionSettings.supportsCellularIpad() {
             alert.addAction(UIAlertAction(title: "GPS Source: Phone only (non-cellular iPad)", style: .default))
         }
@@ -524,6 +570,27 @@ class MainViewController: UIViewController {
         }
 
         alert.addAction(UIAlertAction(title: "Close", style: .cancel))
+        configurePopoverSource(for: alert)
+        present(alert, animated: true)
+    }
+
+    private func presentConnectionModeMenu() {
+        let alert = UIAlertController(title: "Connection Mode", message: nil, preferredStyle: .actionSheet)
+
+        for option in [ProjectionConnectionMode.auto, .wirelessHelper, .directHeadunit] {
+            let title = option == ProjectionSettings.connectionMode ? "\(option.title) (Current)" : option.title
+            alert.addAction(UIAlertAction(title: title, style: .default) { [weak self] _ in
+                ProjectionSettings.connectionMode = option
+                self?.updateConnectButtonTitle()
+                self?.updateUIForConnectionState(self?.connectionManager.state ?? .disconnected)
+                self?.presentSettingsMenu()
+            })
+        }
+
+        alert.addAction(UIAlertAction(title: "Back", style: .cancel) { [weak self] _ in
+            self?.presentSettingsMenu()
+        })
+
         configurePopoverSource(for: alert)
         present(alert, animated: true)
     }
@@ -656,12 +723,24 @@ class MainViewController: UIViewController {
         let device = connectionManager.connectedDevice
         let details = [
             "State: \(connectionManager.state.description)",
+            "Status: \(connectionManager.statusDetail)",
             "Device: \(device?.displayName ?? "Unknown")",
             "IP: \(device?.ip ?? "Unknown")",
             "Port: \(device?.port ?? 0)"
         ].joined(separator: "\n")
 
         let alert = UIAlertController(title: "Connection", message: details, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "Close", style: .cancel))
+        present(alert, animated: true)
+    }
+
+    private func presentDiagnostics() {
+        let alert = UIAlertController(
+            title: "Diagnostics",
+            message: connectionManager.diagnosticLines().joined(separator: "\n"),
+            preferredStyle: .alert
+        )
+
         alert.addAction(UIAlertAction(title: "Close", style: .cancel))
         present(alert, animated: true)
     }
@@ -731,6 +810,15 @@ class MainViewController: UIViewController {
 extension MainViewController: ConnectionManagerDelegate {
     func connectionManager(_ manager: ConnectionManager, didChangeState state: ConnectionState) {
         updateUIForConnectionState(state)
+    }
+
+    func connectionManager(_ manager: ConnectionManager, didUpdateStatus status: String) {
+        switch manager.state {
+        case .disconnected, .discovering, .waitingForWirelessHelper, .connecting, .handshaking, .error:
+            statusLabel.text = status
+        case .running:
+            break
+        }
     }
 
     func connectionManager(_ manager: ConnectionManager, didDiscoverDevice device: DiscoveredDevice) {

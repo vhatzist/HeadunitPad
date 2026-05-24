@@ -13,6 +13,7 @@ final class PCMAudioPlayer {
     private let audioQueue = DispatchQueue(label: "com.headunitpad.audio.player", qos: .userInitiated)
     private var isMicrophoneActive = false
     private var microphoneStateObserver: NSObjectProtocol?
+    private var routeChangeObserver: NSObjectProtocol?
 
     init() {
         microphoneStateObserver = NotificationCenter.default.addObserver(
@@ -35,11 +36,30 @@ final class PCMAudioPlayer {
                 }
             }
         }
+
+        routeChangeObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: nil,
+            queue: nil
+        ) { [weak self] note in
+            self?.audioQueue.async {
+                guard let self = self else { return }
+                self.logCurrentAudioRoute(prefix: "PCMAudioPlayer: route changed")
+                self.streams.values.forEach { $0.player.stop() }
+                self.streams.removeAll()
+                self.engine.stop()
+                self.engine.reset()
+                self.sessionConfigured = false
+            }
+        }
     }
 
     deinit {
         if let microphoneStateObserver {
             NotificationCenter.default.removeObserver(microphoneStateObserver)
+        }
+        if let routeChangeObserver {
+            NotificationCenter.default.removeObserver(routeChangeObserver)
         }
     }
 
@@ -91,9 +111,10 @@ final class PCMAudioPlayer {
         if needsConfigure {
             do {
                 // Re-apply playback policy if mic flow changed the global AVAudioSession.
-                try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+                try session.setCategory(.playback, mode: .default, options: [])
                 try session.setActive(true)
                 sessionConfigured = true
+                logCurrentAudioRoute(prefix: "PCMAudioPlayer: audio session configured")
             } catch {
                 print("PCMAudioPlayer: Failed to configure audio session: \(error)")
             }
@@ -187,5 +208,11 @@ final class PCMAudioPlayer {
         }
 
         return buffer
+    }
+
+    private func logCurrentAudioRoute(prefix: String) {
+        let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
+        let description = outputs.map { "\($0.portName) [\($0.portType.rawValue)]" }.joined(separator: ", ")
+        print("\(prefix): \(description.isEmpty ? "no outputs" : description)")
     }
 }
