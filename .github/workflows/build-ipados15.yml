@@ -1,49 +1,58 @@
 name: Build HeadunitPad for iPadOS 15
 
 on:
-  workflow_dispatch:
+workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: macos-15
+build:
+runs-on: macos-15
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+```
+steps:
+  - name: Checkout
+    uses: actions/checkout@v4
 
-      - name: Set Xcode 16.4
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: '16.4'
+  - name: Select Xcode 16.4
+    run: |
+      sudo xcode-select -s /Applications/Xcode_16.4.app
+      xcodebuild -version
 
-      - name: Set deployment target
-        run: |
-          sed -i '' "s/platform :ios, '16.6'/platform :ios, '15.0'/" Podfile
+  - name: Build HeadunitPad
+    run: |
+      xcodebuild \
+        -project HeadunitPad/HeadunitPad.xcodeproj \
+        -scheme HeadunitPad \
+        -configuration Release \
+        -sdk iphoneos \
+        -archivePath "$RUNNER_TEMP/HeadunitPad.xcarchive" \
+        IPHONEOS_DEPLOYMENT_TARGET=15.0 \
+        CODE_SIGNING_ALLOWED=NO \
+        CODE_SIGNING_REQUIRED=NO \
+        archive
 
-      - name: Install CocoaPods
-        run: pod install
+  - name: Prepare IPA
+    run: |
+      set -e
 
-      - name: Build
-        run: |
-          xcodebuild clean build \
-            -workspace "HeadunitPad.xcworkspace" \
-            -scheme "HeadunitPad" \
-            -configuration Release \
-            -sdk iphoneos \
-            -derivedDataPath build \
-            IPHONEOS_DEPLOYMENT_TARGET=15.0 \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO
+      APP_PATH="$RUNNER_TEMP/HeadunitPad.xcarchive/Products/Applications/HeadunitPad.app"
+      IPA_DIR="$RUNNER_TEMP/ipa"
 
-      - name: Package IPA
-        run: |
-          mkdir Payload
-          cp -r build/Build/Products/Release-iphoneos/HeadunitPad.app Payload/
-          zip -r HeadunitPad-iPadOS15.ipa Payload
+      rm -rf "$IPA_DIR"
+      mkdir -p "$IPA_DIR/Payload"
 
-      - name: Upload IPA
-        uses: actions/upload-artifact@v4
-        with:
-          name: HeadunitPad-iPadOS15
-          path: HeadunitPad-iPadOS15.ipa
+      cp -R "$APP_PATH" "$IPA_DIR/Payload/HeadunitPad.app"
+
+      cd "$IPA_DIR"
+      zip -r "$RUNNER_TEMP/HeadunitPad-iPadOS15.ipa" Payload
+
+      echo "IPA created:"
+      ls -lh "$RUNNER_TEMP/HeadunitPad-iPadOS15.ipa"
+
+  - name: Upload IPA
+    uses: actions/upload-artifact@v4
+    with:
+      name: HeadunitPad-iPadOS15
+      path: ${{ runner.temp }}/HeadunitPad-iPadOS15.ipa
+      if-no-files-found: error
+      retention-days: 7
+```
