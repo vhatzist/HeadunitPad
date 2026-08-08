@@ -5,7 +5,6 @@ import UIKit
 
 final class NowPlayingCoordinator {
     static let shared = NowPlayingCoordinator()
-
     private var isActive = false
     var onRemoteCommand: ((RemoteMediaCommand) -> Void)?
     private var metadata = NowPlayingMetadata.placeholder
@@ -17,15 +16,20 @@ final class NowPlayingCoordinator {
     private var configuredCommandCenter: MPRemoteCommandCenter?
     private var lastPublishedIsPlaying: Bool?
     private var hasConfiguredAudioSession = false
-
     private init() {}
 
     private var activeInfoCenter: MPNowPlayingInfoCenter {
-        nowPlayingSession?.nowPlayingInfoCenter ?? MPNowPlayingInfoCenter.default()
+        if #available(iOS 16.0, *) {
+            return nowPlayingSession?.nowPlayingInfoCenter ?? MPNowPlayingInfoCenter.default()
+        }
+        return MPNowPlayingInfoCenter.default()
     }
 
     private var activeCommandCenter: MPRemoteCommandCenter {
-        nowPlayingSession?.remoteCommandCenter ?? MPRemoteCommandCenter.shared()
+        if #available(iOS 16.0, *) {
+            return nowPlayingSession?.remoteCommandCenter ?? MPRemoteCommandCenter.shared()
+        }
+        return MPRemoteCommandCenter.shared()
     }
 
     func activate() {
@@ -34,7 +38,6 @@ final class NowPlayingCoordinator {
                 self.updateNowPlayingInfo(metadata: self.metadata, playbackState: self.playbackState)
                 return
             }
-
             self.isActive = true
             self.configureAudioSession()
             self.startSilentPlayback()
@@ -48,7 +51,6 @@ final class NowPlayingCoordinator {
     func deactivate() {
         DispatchQueue.main.async {
             guard self.isActive else { return }
-
             self.isActive = false
             self.metadata = .placeholder
             self.playbackState = NowPlayingPlaybackState(isPlaying: true, elapsedSeconds: 0)
@@ -76,7 +78,6 @@ final class NowPlayingCoordinator {
         if hasConfiguredAudioSession {
             return
         }
-
         let session = AVAudioSession.sharedInstance()
         do {
             try session.setCategory(.playback, mode: .default, options: [])
@@ -102,14 +103,24 @@ final class NowPlayingCoordinator {
             player.volume = 0.0001
             keepAliveItem = item
             keepAlivePlayer = player
-            item.nowPlayingInfo = makeNowPlayingInfo(metadata: metadata, playbackState: playbackState)
-            keepAliveLooper = AVPlayerLooper(player: player, templateItem: item)
-            configureNowPlayingSession(for: player)
-        }
 
+            if #available(iOS 16.0, *) {
+                item.nowPlayingInfo = makeNowPlayingInfo(
+                    metadata: metadata,
+                    playbackState: playbackState
+                )
+            }
+
+            keepAliveLooper = AVPlayerLooper(player: player, templateItem: item)
+
+            if #available(iOS 16.0, *) {
+                configureNowPlayingSession(for: player)
+            }
+        }
         player.playImmediately(atRate: 1.0)
     }
 
+    @available(iOS 16.0, *)
     private func configureNowPlayingSession(for player: AVPlayer) {
         let session = MPNowPlayingSession(players: [player])
         session.automaticallyPublishesNowPlayingInfo = false
@@ -134,7 +145,10 @@ final class NowPlayingCoordinator {
     }
 
     private func tearDownSilentPlayback() {
-        nowPlayingSession?.nowPlayingInfoCenter.nowPlayingInfo = nil
+        if #available(iOS 16.0, *) {
+            nowPlayingSession?.nowPlayingInfoCenter.nowPlayingInfo = nil
+        }
+
         keepAlivePlayer?.pause()
         keepAlivePlayer?.removeAllItems()
         keepAliveLooper?.disableLooping()
@@ -178,6 +192,7 @@ final class NowPlayingCoordinator {
         data.appendLittleEndian(bitsPerSample)
         data.append(contentsOf: [0x64, 0x61, 0x74, 0x61])
         data.appendLittleEndian(dataSize)
+
         for sampleIndex in 0..<sampleCount {
             let t = Double(sampleIndex) / Double(sampleRate)
             let sine = sin(2.0 * Double.pi * 440.0 * t)
@@ -200,13 +215,16 @@ final class NowPlayingCoordinator {
             let didChangePlayingState = self.playbackState.isPlaying != playbackState.isPlaying
             self.playbackState = playbackState
             guard self.isActive else { return }
+
             let shouldPublish = didChangePlayingState
+
             if playbackState.isPlaying {
                 self.configureAudioSession()
                 self.startSilentPlayback()
             } else {
                 self.pauseSilentPlayback()
             }
+
             if shouldPublish {
                 self.updateNowPlayingInfo(
                     metadata: self.metadata,
@@ -214,6 +232,7 @@ final class NowPlayingCoordinator {
                     forceRepublish: true
                 )
             }
+
             print("NowPlayingCoordinator: playback updated isPlaying=\(playbackState.isPlaying) elapsed=\(playbackState.elapsedSeconds) published=\(shouldPublish)")
         }
     }
@@ -273,26 +292,38 @@ final class NowPlayingCoordinator {
             playbackState = NowPlayingPlaybackState(isPlaying: true, elapsedSeconds: playbackState.elapsedSeconds)
             configureAudioSession()
             startSilentPlayback()
+
         case .pause, .stop:
             playbackState = NowPlayingPlaybackState(isPlaying: false, elapsedSeconds: playbackState.elapsedSeconds)
             pauseSilentPlayback()
+
         case .playPause:
-            playbackState = NowPlayingPlaybackState(isPlaying: !playbackState.isPlaying, elapsedSeconds: playbackState.elapsedSeconds)
+            playbackState = NowPlayingPlaybackState(
+                isPlaying: !playbackState.isPlaying,
+                elapsedSeconds: playbackState.elapsedSeconds
+            )
+
             if playbackState.isPlaying {
                 configureAudioSession()
                 startSilentPlayback()
             } else {
                 pauseSilentPlayback()
             }
+
         case .next, .previous:
             break
         }
 
-        updateNowPlayingInfo(metadata: metadata, playbackState: playbackState, forceRepublish: true)
+        updateNowPlayingInfo(
+            metadata: metadata,
+            playbackState: playbackState,
+            forceRepublish: true
+        )
     }
 
     private func clearRemoteCommands() {
         let commandCenter = configuredCommandCenter ?? activeCommandCenter
+
         commandCenter.playCommand.removeTarget(nil)
         commandCenter.pauseCommand.removeTarget(nil)
         commandCenter.togglePlayPauseCommand.removeTarget(nil)
@@ -300,6 +331,7 @@ final class NowPlayingCoordinator {
         commandCenter.previousTrackCommand.removeTarget(nil)
         commandCenter.stopCommand.removeTarget(nil)
         commandCenter.changePlaybackPositionCommand.removeTarget(nil)
+
         configuredCommandCenter = nil
     }
 
@@ -308,14 +340,22 @@ final class NowPlayingCoordinator {
         playbackState: NowPlayingPlaybackState,
         forceRepublish: Bool = false
     ) {
-        let info = makeNowPlayingInfo(metadata: metadata, playbackState: playbackState)
+        let info = makeNowPlayingInfo(
+            metadata: metadata,
+            playbackState: playbackState
+        )
 
         updateRemoteCommandAvailability()
+
         if forceRepublish || lastPublishedIsPlaying != playbackState.isPlaying {
             activeInfoCenter.nowPlayingInfo = nil
         }
-        keepAliveItem?.nowPlayingInfo = info
-        keepAlivePlayer?.currentItem?.nowPlayingInfo = info
+
+        if #available(iOS 16.0, *) {
+            keepAliveItem?.nowPlayingInfo = info
+            keepAlivePlayer?.currentItem?.nowPlayingInfo = info
+        }
+
         activeInfoCenter.nowPlayingInfo = info
         lastPublishedIsPlaying = playbackState.isPlaying
     }
@@ -341,11 +381,15 @@ final class NowPlayingCoordinator {
         if let durationSeconds = metadata.durationSeconds {
             info[MPMediaItemPropertyPlaybackDuration] = Double(durationSeconds)
         } else {
-            info[MPMediaItemPropertyPlaybackDuration] = Double(max(playbackState.elapsedSeconds + 3600, 3600))
+            info[MPMediaItemPropertyPlaybackDuration] = Double(
+                max(playbackState.elapsedSeconds + 3600, 3600)
+            )
         }
 
         if let artworkImage = metadata.artworkImage {
-            info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: artworkImage.size) { _ in artworkImage }
+            info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(
+                boundsSize: artworkImage.size
+            ) { _ in artworkImage }
         }
 
         return info
@@ -353,6 +397,7 @@ final class NowPlayingCoordinator {
 
     private func updateRemoteCommandAvailability() {
         let commandCenter = configuredCommandCenter ?? activeCommandCenter
+
         commandCenter.playCommand.isEnabled = true
         commandCenter.pauseCommand.isEnabled = true
         commandCenter.togglePlayPauseCommand.isEnabled = true
@@ -407,4 +452,4 @@ struct NowPlayingMetadata {
 struct NowPlayingPlaybackState {
     let isPlaying: Bool
     let elapsedSeconds: UInt64
-}
+} 
