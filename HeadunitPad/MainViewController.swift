@@ -170,7 +170,9 @@ class MainViewController: UIViewController {
     }
 
     private func applyOrientationLock() {
-        setNeedsUpdateOfSupportedInterfaceOrientations()
+        if #available(iOS 16.0, *) {
+            setNeedsUpdateOfSupportedInterfaceOrientations()
+        }
         touchOverlayView.isMultipleTouchEnabled = true
 
         let targetMask = supportedInterfaceOrientations
