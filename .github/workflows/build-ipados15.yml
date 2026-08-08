@@ -7,7 +7,6 @@ jobs:
 build:
 runs-on: macos-15
 
-```
 steps:
   - name: Checkout
     uses: actions/checkout@v4
@@ -57,4 +56,3 @@ steps:
       path: ${{ runner.temp }}/HeadunitPad-iPadOS15.ipa
       if-no-files-found: error
       retention-days: 7
-```
