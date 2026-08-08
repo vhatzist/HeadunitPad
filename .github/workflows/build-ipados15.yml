@@ -11,6 +11,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Find Xcode project
+        run: |
+          echo "Current directory:"
+          pwd
+          echo ""
+          echo "Repository contents:"
+          find . -maxdepth 4 -name "*.xcodeproj" -o -name "*.xcworkspace"
+
       - name: Select Xcode 16.4
         run: sudo xcode-select -s /Applications/Xcode_16.4.app
 
