@@ -1,11 +1,11 @@
 name: Build HeadunitPad for iPadOS 15
 
 on:
-workflow_dispatch:
+  workflow_dispatch:
 
 jobs:
-build:
-runs-on: macos-15
+  build:
+    runs-on: macos-15
 
 
 steps:
