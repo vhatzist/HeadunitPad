@@ -17,6 +17,15 @@ jobs:
       - name: Show Xcode version
         run: xcodebuild -version
 
+      - name: Install CocoaPods
+        run: |
+          sudo gem install cocoapods
+          pod --version
+
+      - name: Install Pods
+        run: |
+          pod install --repo-update
+
       - name: Build HeadunitPad
         run: |
           xcodebuild \
