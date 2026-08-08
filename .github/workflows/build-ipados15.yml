@@ -13,9 +13,10 @@ steps:
     uses: actions/checkout@v4
 
   - name: Select Xcode 16.4
-    run: |
-      sudo xcode-select -s /Applications/Xcode_16.4.app
-      xcodebuild -version
+    run: sudo xcode-select -s /Applications/Xcode_16.4.app
+
+  - name: Show Xcode version
+    run: xcodebuild -version
 
   - name: Build HeadunitPad
     run: |
@@ -36,6 +37,7 @@ steps:
 
       APP_PATH="$RUNNER_TEMP/HeadunitPad.xcarchive/Products/Applications/HeadunitPad.app"
       IPA_DIR="$RUNNER_TEMP/ipa"
+      IPA_PATH="$RUNNER_TEMP/HeadunitPad-iPadOS15.ipa"
 
       rm -rf "$IPA_DIR"
       mkdir -p "$IPA_DIR/Payload"
@@ -43,10 +45,10 @@ steps:
       cp -R "$APP_PATH" "$IPA_DIR/Payload/HeadunitPad.app"
 
       cd "$IPA_DIR"
-      zip -r "$RUNNER_TEMP/HeadunitPad-iPadOS15.ipa" Payload
+      zip -r "$IPA_PATH" Payload
 
       echo "IPA created:"
-      ls -lh "$RUNNER_TEMP/HeadunitPad-iPadOS15.ipa"
+      ls -lh "$IPA_PATH"
 
   - name: Upload IPA
     uses: actions/upload-artifact@v4
