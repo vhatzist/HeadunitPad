@@ -1,0 +1,49 @@
+name: Build HeadunitPad for iPadOS 15
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set Xcode 16.4
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '16.4'
+
+      - name: Set deployment target
+        run: |
+          sed -i '' "s/platform :ios, '16.6'/platform :ios, '15.0'/" Podfile
+
+      - name: Install CocoaPods
+        run: pod install
+
+      - name: Build
+        run: |
+          xcodebuild clean build \
+            -workspace "HeadunitPad.xcworkspace" \
+            -scheme "HeadunitPad" \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            IPHONEOS_DEPLOYMENT_TARGET=15.0 \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Package IPA
+        run: |
+          mkdir Payload
+          cp -r build/Build/Products/Release-iphoneos/HeadunitPad.app Payload/
+          zip -r HeadunitPad-iPadOS15.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: HeadunitPad-iPadOS15
+          path: HeadunitPad-iPadOS15.ipa
