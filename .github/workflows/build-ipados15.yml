@@ -1,10 +1,10 @@
-name: Build HeadunitPad for iPadOS 15
+name: Find HeadunitPad Xcode Project
 
 on:
   workflow_dispatch:
 
 jobs:
-  build:
+  find-project:
     runs-on: macos-15
 
     steps:
@@ -13,64 +13,25 @@ jobs:
 
       - name: Find Xcode project
         run: |
-          echo "Current directory:"
-          pwd
-          echo ""
-          echo "Repository contents:"
-          find . -maxdepth 4 -name "*.xcodeproj" -o -name "*.xcworkspace"
-
-      - name: Select Xcode 16.4
-        run: sudo xcode-select -s /Applications/Xcode_16.4.app
-
-      - name: Show Xcode version
-        run: xcodebuild -version
-
-      - name: Build HeadunitPad
-        run: |
-          echo "Current directory:"
+          echo "========================================"
+          echo "Current directory"
+          echo "========================================"
           pwd
 
           echo ""
-          echo "Top-level files:"
+          echo "========================================"
+          echo "Top-level contents"
+          echo "========================================"
           ls -la
 
           echo ""
-          echo "Finding Xcode projects:"
-          find . -name "*.xcodeproj" -o -name "*.xcworkspace"
-          xcodebuild \
-            -project HeadunitPad/HeadunitPad.xcodeproj \
-            -scheme HeadunitPad \
-            -configuration Release \
-            -sdk iphoneos \
-            -archivePath "$RUNNER_TEMP/HeadunitPad.xcarchive" \
-            IPHONEOS_DEPLOYMENT_TARGET=15.0 \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            archive
+          echo "========================================"
+          echo "Xcode projects and workspaces"
+          echo "========================================"
+          find . \( -name "*.xcodeproj" -o -name "*.xcworkspace" \) -print
 
-      - name: Prepare IPA
-        run: |
-          set -e
-
-          APP_PATH="$RUNNER_TEMP/HeadunitPad.xcarchive/Products/Applications/HeadunitPad.app"
-          IPA_DIR="$RUNNER_TEMP/ipa"
-          IPA_PATH="$RUNNER_TEMP/HeadunitPad-iPadOS15.ipa"
-
-          rm -rf "$IPA_DIR"
-          mkdir -p "$IPA_DIR/Payload"
-
-          cp -R "$APP_PATH" "$IPA_DIR/Payload/HeadunitPad.app"
-
-          cd "$IPA_DIR"
-          zip -r "$IPA_PATH" Payload
-
-          echo "IPA created:"
-          ls -lh "$IPA_PATH"
-
-      - name: Upload IPA
-        uses: actions/upload-artifact@v4
-        with:
-          name: HeadunitPad-iPadOS15
-          path: ${{ runner.temp }}/HeadunitPad-iPadOS15.ipa
-          if-no-files-found: error
-          retention-days: 7
+          echo ""
+          echo "========================================"
+          echo "Directory tree"
+          echo "========================================"
+          find . -maxdepth 3 -type d -print | sort
